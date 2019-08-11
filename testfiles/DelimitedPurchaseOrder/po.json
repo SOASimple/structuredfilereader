@@ -1,0 +1,94 @@
+{
+	"RecordDefinitions": [
+    {
+      "Name": "POHeader",
+			"MatchExpression": "^H",
+			"ReaderName": "Delimited",
+      "RecordReader": {
+        "Delimiter": ","
+      },
+			"FieldDefinitions": [
+				{
+					"Name": "RecordType",
+					"TypeName": "String"
+				},
+        {
+					"Name": "PONumber",
+					"TypeName": "String"
+				},
+        {
+					"Name": "VendorCode",
+					"TypeName": "String"
+				},
+        {
+					"Name": "VendorName",
+					"TypeName": "String"
+				},
+        {
+					"Name": "PaymentTerms",
+					"TypeName": "String"
+				}
+      ]
+    },
+    {
+      "Name": "POLine",
+      "ParentRecordName": "POHeader",
+      "MatchExpression": "^L",
+      "ReaderName": "Delimited",
+      "RecordReader": {
+        "Delimiter": ","
+      },
+      "FieldDefinitions": [
+        {
+          "Name": "RecordType",
+          "TypeName": "String"
+        },
+        {
+          "Name": "LineNumber",
+          "TypeName": "String"
+        },
+        {
+          "Name": "PartNumber",
+          "TypeName": "String"
+        },
+        {
+          "Name": "unitOfMeasure",
+          "TypeName": "String"
+        },
+        {
+          "Name": "UnitPrice",
+          "TypeName": "Number",
+          "FieldType": {
+            "ConvertToDecimalPlaces": 2
+          }
+        }
+      ]
+    },
+    {
+      "Name": "POShipment",
+      "ParentRecordName": "POLine",
+      "MatchExpression": "^S",
+      "ReaderName": "Delimited",
+      "RecordReader": {
+        "Delimiter": ","
+      },
+      "FieldDefinitions": [
+        {
+          "Name": "RecordType",
+          "TypeName": "String"
+        },
+        {
+          "Name": "Quantity",
+          "TypeName": "Number"
+        },
+        {
+          "Name": "DeliveryDate",
+          "TypeName": "Date",
+          "FieldType": {
+            "Format": "2006-01-02"
+          }
+        }
+      ]
+    }
+  ]
+}

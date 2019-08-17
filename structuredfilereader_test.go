@@ -217,9 +217,7 @@ func TestParseAnonymousJoins(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	recChan := make(chan *Record)
-	errChan := make(chan *error)
-	go p.Parse(ioutil.NopCloser(strings.NewReader(anonymousHierarchyData)), recChan, errChan)
+	recChan, errChan := p.Parse(ioutil.NopCloser(strings.NewReader(anonymousHierarchyData)))
 
 	invoices := make([]*Record, 0)
 channelListener:

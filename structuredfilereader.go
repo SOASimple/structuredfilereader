@@ -79,23 +79,30 @@ func NewParser(config io.ReadCloser) (parser Parser, err error) {
 //ParseFile parses the requested file returning 2 channels which will be written to by Parse.
 //Elem can be any number of string required to build up the full path to the file
 //(see http://godoc.org/path/filepath#Join).
-func (p *Parser) ParseFile(elem ...string) (recordChan chan *Record, errChan chan *error) {
-	recordChan = make(chan *Record)
-	errChan = make(chan *error)
+func (p *Parser) ParseFile(elem ...string) (recordChan <-chan *Record, errorChan <-chan *error) {
+	recChan := make(chan *Record)
+	errChan := make(chan *error)
 	//Open the file
 	file, err := os.Open(filepath.Join(elem...))
 	if err != nil {
 		errChan <- &err
-		close(recordChan)
+		close(recChan)
 		return
 	}
-	go p.Parse(file, recordChan, errChan)
-	return
+	go p.parse(file, recChan, errChan)
+	return recChan, errChan
 }
 
 //Parse writes to the first channel each time a top Level (with no parent defined) record is completed(along with its child Records).
 //Callers should loop over a select on the records & err channels & exit the loop when Record.IsValid is not true.
-func (p *Parser) Parse(source io.ReadCloser, recordChan chan<- *Record, errChan chan<- *error) {
+func (p *Parser) Parse(source io.ReadCloser) (recordChan <-chan *Record, errorChan <-chan *error) {
+	recChan := make(chan *Record)
+	errChan := make(chan *error)
+	go p.parse(source, recChan, errChan)
+	return recChan, errChan
+}
+
+func (p *Parser) parse(source io.ReadCloser, recordChan chan<- *Record, errChan chan<- *error) {
 	defer source.Close()
 	defer close(recordChan)
 	defer close(errChan)

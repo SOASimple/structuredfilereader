@@ -2,7 +2,6 @@ package structuredfilereader
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"os"
 	"reflect"
@@ -12,6 +11,7 @@ import (
 )
 
 func TestUnmarshalFixedWidthRecordReader(t *testing.T) {
+	//SetLogOutput(os.Stdout)
 	configStr := `
     {
       "Name": "TestRecordDefinition01",
@@ -41,10 +41,11 @@ func TestUnmarshalFixedWidthRecordReader(t *testing.T) {
 
 	json.NewEncoder(os.Stdout).Encode(recDef)
 
-	fmt.Printf("RecordReader is a %s\n", reflect.TypeOf(recDef.RecordReader).Name())
+	logger.Printf("RecordReader is a %s\n", reflect.TypeOf(recDef.RecordReader).Name())
 }
 
 func TestUnmarshalDelimitedRecordReader(t *testing.T) {
+	//SetLogOutput(os.Stdout)
 	configStr := `
     {
       "Name": "TestRecordDefinition01",
@@ -63,7 +64,7 @@ func TestUnmarshalDelimitedRecordReader(t *testing.T) {
 
 	json.NewEncoder(os.Stdout).Encode(recDef)
 
-	fmt.Printf("RecordReader is a %s\n", reflect.TypeOf(recDef.RecordReader).Name())
+	logger.Printf("RecordReader is a %s\n", reflect.TypeOf(recDef.RecordReader).Name())
 }
 
 const stringNumDateCfg = `
@@ -98,6 +99,7 @@ const stringNumDateCfg = `
   `
 
 func TestUnmarshalDelimitedFieldDefStringAndNumberAndDate(t *testing.T) {
+	//SetLogOutput(os.Stdout)
 	var recDef RecordDefinition
 	err := json.Unmarshal([]byte(stringNumDateCfg), &recDef)
 	if err != nil {
@@ -107,7 +109,7 @@ func TestUnmarshalDelimitedFieldDefStringAndNumberAndDate(t *testing.T) {
 
 	json.NewEncoder(os.Stdout).Encode(recDef)
 
-	fmt.Printf("RecordReader is a %s\n", reflect.TypeOf(recDef.RecordReader).Name())
+	logger.Printf("RecordReader is a %s\n", reflect.TypeOf(recDef.RecordReader).Name())
 }
 
 const anonymousJoinCfg = `
@@ -225,13 +227,13 @@ channelListener:
 		select {
 		case err := <-errChan:
 			if err == nil {
-				fmt.Println("Received nil Record (on error channel)- exiting.")
+				logger.Println("Received nil Record (on error channel)- exiting.")
 				break channelListener
 			}
 			t.Errorf("Received error: %s", *err)
 		case rec := <-recChan:
 			if rec == nil {
-				fmt.Println("Received nil Record (on record channel)- exiting.")
+				logger.Println("Received nil Record (on record channel)- exiting.")
 				break channelListener
 			}
 			//json.NewEncoder(os.Stdout).Encode(rec)
@@ -292,6 +294,7 @@ channelListener:
 }
 
 func TestDelimitedPO(t *testing.T) {
+	//SetLogOutput(os.Stdout)
 	config, err := os.Open("testfiles/DelimitedPurchaseOrder/po.json")
 	if err != nil {
 		t.Error(err)
@@ -312,13 +315,13 @@ channelListener:
 		select {
 		case err := <-errChan:
 			if err == nil {
-				fmt.Println("Received nil Record (on error channel)- exiting.")
+				logger.Println("Received nil Record (on error channel)- exiting.")
 				break channelListener
 			}
 			t.Errorf("Received error: %s", *err)
 		case rec := <-recChan:
 			if rec == nil {
-				fmt.Println("Received nil Record (on record channel)- exiting.")
+				logger.Println("Received nil Record (on record channel)- exiting.")
 				break channelListener
 			}
 			jsonBytes, _ := json.MarshalIndent(rec, "", "  ")

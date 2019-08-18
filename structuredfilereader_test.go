@@ -320,22 +320,18 @@ func TestDelimitedPO(t *testing.T) {
 	)
 }
 
-// func TestInvalidFile(t *testing.T) {
-// 	p, err := NewParser(ioutil.NopCloser(strings.NewReader(JoinCfg)))
-// 	if err != nil {
-// 		t.Error(err)
-// 		return
-// 	}
-// 	_, errChan := p.ParseFile("some", "junk", "file.dat")
-// channelListener:
-// 	for {
-// 		select {
-// 		case err := <-errChan:
-// 			if err == nil {
-// 				logger.Println("Received nil Record (on error channel)- exiting.")
-// 				break channelListener
-// 			}
-// 			t.Errorf("Received error: %s", *err)
-// 		}
-// 	}
-// }
+func TestMissinFile(t *testing.T) {
+	p, err := NewParser(ioutil.NopCloser(strings.NewReader(JoinCfg)))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	p.ProcessFile(
+		ProcessorFunc(func(record *Record, err error) {
+			if err == nil {
+				t.Error(err)
+			}
+		}),
+		"some", "junk", "file.dat",
+	)
+}

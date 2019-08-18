@@ -89,8 +89,7 @@ func (p *Parser) ParseFile(elem ...string) (recordChan <-chan *Record, errorChan
 		close(recChan)
 		return
 	}
-	go p.parse(file, recChan, errChan)
-	return recChan, errChan
+	return p.Parse(file)
 }
 
 //Parse writes to the first channel each time a top Level (with no parent defined) record is completed(along with its child Records).
@@ -115,8 +114,9 @@ func (p *Parser) parse(source io.ReadCloser, recordChan chan<- *Record, errChan 
 	//For each record definition name, we remember the last record we created of that
 	//name and store it here so we can attach child records which join.
 	lastRecords := make(map[string]*Record)
-
+	lineNum := 0
 	for scanner.Scan() {
+		lineNum++
 		for _, recDef := range p.RecordDefinitions {
 			match, err := recDef.Match(scanner.Bytes())
 			if err != nil {
@@ -129,7 +129,7 @@ func (p *Parser) parse(source io.ReadCloser, recordChan chan<- *Record, errChan 
 				//logger.Printf("No match for record definition %s: %s\n", recDef.Name, string(scanner.Bytes()))
 				continue
 			}
-			logger.Printf("Found match for record definition %s: %s\n", recDef.Name, string(scanner.Bytes()))
+			logger.Printf("Found match on line %d for record definition %s: %s\n", lineNum, recDef.Name, string(scanner.Bytes()))
 			recVals, err := recDef.RecordReader.Read(scanner.Bytes())
 			if err != nil {
 				err = fmt.Errorf("Error reading from RecordReader: %s", err)
@@ -144,14 +144,14 @@ func (p *Parser) parse(source io.ReadCloser, recordChan chan<- *Record, errChan 
 			}
 			for i, fldDef := range recDef.FieldDefinitions {
 				if i > len(recVals)-1 {
-					err = fmt.Errorf("Field %s in Record %s is past the end of available data", fldDef.Name, recDef.Name)
+					err = fmt.Errorf("Field %s in Record %s is past the end of available data on line %d", fldDef.Name, recDef.Name, lineNum)
 					logger.Printf("Sending error: %s", err.Error())
 					errChan <- &err
 					return
 				}
 				fldVal, valerr := fldDef.FieldType.GetValue(recVals[i])
 				if valerr != nil {
-					err = fmt.Errorf("Error getting field value: %s", err)
+					err = fmt.Errorf("Error on line %d getting field value: %s", lineNum, valerr)
 					logger.Printf("Sending error %s\n", err)
 					errChan <- &err
 					return
@@ -184,7 +184,7 @@ func (p *Parser) parse(source io.ReadCloser, recordChan chan<- *Record, errChan 
 					logger.Printf("Adding %s to %s", recDef.Name, parent.Name)
 					parent.Children = append(parent.Children, &rec)
 				} else {
-					err = fmt.Errorf("No available parent record %s for child record %s", recDef.ParentRecordName, rec.Name)
+					err = fmt.Errorf("No available parent record %s for child record %s on line %d", recDef.ParentRecordName, rec.Name, lineNum)
 					logger.Printf("Sending error %s\n", err)
 					errChan <- &err
 					return
@@ -197,6 +197,47 @@ func (p *Parser) parse(source io.ReadCloser, recordChan chan<- *Record, errChan 
 	//Finally, we need to send topRec.
 	logger.Printf("Sending final top level record %s\n", topRec.Name)
 	recordChan <- topRec
+}
+
+//ProcessorFunc defines a callback which can be passed to Process & ProcessFile.
+//The callback will be called once for each top level Record read from the input
+//containing the top leve Record and any of its children.
+type ProcessorFunc func(record *Record, err error)
+
+//ProcessFile will Parse the file identified  and call the passed processor once for each
+//top level Record found or any error while reading the file.
+//Elem can be any number of strings required to build up the full path to the file
+//(see http://godoc.org/path/filepath#Join).
+func (p *Parser) ProcessFile(processor ProcessorFunc, elem ...string) {
+	file, err := os.Open(filepath.Join(elem...))
+	if err != nil {
+		processor(nil, err)
+		return
+	}
+	p.Process(processor, file)
+}
+
+//Process will Parse the source and call the passed processor once for each
+//top level Record found or any error while reading the source.
+func (p *Parser) Process(processor ProcessorFunc, source io.ReadCloser) {
+	recChan, errChan := p.Parse(source)
+channelListener:
+	for {
+		select {
+		case err := <-errChan:
+			if err == nil {
+				logger.Println("Received nil Record (on error channel)- exiting.")
+				break channelListener
+			}
+			processor(nil, *err)
+		case rec := <-recChan:
+			if rec == nil {
+				logger.Println("Received nil Record (on record channel)- exiting.")
+				break channelListener
+			}
+			processor(rec, nil)
+		}
+	}
 }
 
 //RecordReader implementations read records into slices of strings

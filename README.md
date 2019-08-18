@@ -11,9 +11,43 @@ Records must be ordered in the file so that child records are listed after their
 
 Supports converting field content from the file into Go data types (string, float64, date).
 
-Uses channels to communicate each "parentless" record (and any children) as they are constructed in order to support a chunked streaming capability so that large files can be processed without consuming large amounts of memory.
+Process & ProcessFile execute the provided callback passing either a pointer to a Record or an error. If an error is passed, processing ends and no more calls to the callback will be made.
 
-Example usage:
+Example:
+```
+//Open the config file.
+config, err := os.Open("testfiles/DelimitedPurchaseOrder/po.json")
+if err != nil {
+  t.Error(err)
+  return
+}
+
+//Create a new Parser from the config file.
+p, err := NewParser(config)
+if err != nil {
+  t.Error(err)
+  return
+}
+
+p.ProcessFile(
+  ProcessorFunc(func(record *Record, err error) {
+    if err != nil {
+      fmt.Printf("Callback received error: %s", err)
+      return
+    }
+    //Execute your custom logic here.
+    //In this example, we are just fomratting as JSON & printing the Record.
+    jsonBytes, _ := json.MarshalIndent(record, "", "  ")
+    logger.Println(string(jsonBytes))
+  },
+  ),
+  "testfiles", "DelimitedPurchaseOrder", "po.dat",
+)
+```
+
+Parse & ParseFile use channels to communicate each "parentless" record (and any children) as they are constructed in order to support a chunked streaming capability so that large files can be processed without consuming large amounts of memory. This is provided in case something more flexible than a callback is required.
+
+Example:
 ```
 //Open the config file.
 config, err := os.Open("testfiles/DelimitedPurchaseOrder/po.json")

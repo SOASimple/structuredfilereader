@@ -112,7 +112,7 @@ func TestUnmarshalDelimitedFieldDefStringAndNumberAndDate(t *testing.T) {
 	logger.Printf("RecordReader is a %s\n", reflect.TypeOf(recDef.RecordReader).Name())
 }
 
-const anonymousJoinCfg = `
+const JoinCfg = `
 {
 	"RecordDefinitions": [
     {
@@ -201,7 +201,7 @@ const anonymousJoinCfg = `
 	]
 }
 `
-const anonymousHierarchyData = `
+const HierarchyData = `
 010~INV98765~12345~17-JUL-2019
 030~0001~Invoice One, Line One
 033ACCTNUM001
@@ -212,14 +212,14 @@ const anonymousHierarchyData = `
 033ACCTNUM221
 `
 
-func TestParseAnonymousJoins(t *testing.T) {
+func TestParseJoins(t *testing.T) {
 	// SetLogOutput(os.Stdout)
-	p, err := NewParser(ioutil.NopCloser(strings.NewReader(anonymousJoinCfg)))
+	p, err := NewParser(ioutil.NopCloser(strings.NewReader(JoinCfg)))
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	recChan, errChan := p.Parse(ioutil.NopCloser(strings.NewReader(anonymousHierarchyData)))
+	recChan, errChan := p.Parse(ioutil.NopCloser(strings.NewReader(HierarchyData)))
 
 	invoices := make([]*Record, 0)
 channelListener:
@@ -306,27 +306,36 @@ func TestDelimitedPO(t *testing.T) {
 		return
 	}
 
-	recChan, errChan := p.ParseFile("testfiles", "DelimitedPurchaseOrder", "po.dat")
-
-	// logger.SetOutput(os.Stdout)
-
-channelListener:
-	for {
-		select {
-		case err := <-errChan:
-			if err == nil {
-				logger.Println("Received nil Record (on error channel)- exiting.")
-				break channelListener
+	p.ProcessFile(
+		ProcessorFunc(func(record *Record, err error) {
+			if err != nil {
+				t.Errorf("Callback received error: %s", err)
+				return
 			}
-			t.Errorf("Received error: %s", *err)
-		case rec := <-recChan:
-			if rec == nil {
-				logger.Println("Received nil Record (on record channel)- exiting.")
-				break channelListener
-			}
-			jsonBytes, _ := json.MarshalIndent(rec, "", "  ")
+			jsonBytes, _ := json.MarshalIndent(record, "", "  ")
 			logger.Println(string(jsonBytes))
-		}
-	}
-
+		},
+		),
+		"testfiles", "DelimitedPurchaseOrder", "po.dat",
+	)
 }
+
+// func TestInvalidFile(t *testing.T) {
+// 	p, err := NewParser(ioutil.NopCloser(strings.NewReader(JoinCfg)))
+// 	if err != nil {
+// 		t.Error(err)
+// 		return
+// 	}
+// 	_, errChan := p.ParseFile("some", "junk", "file.dat")
+// channelListener:
+// 	for {
+// 		select {
+// 		case err := <-errChan:
+// 			if err == nil {
+// 				logger.Println("Received nil Record (on error channel)- exiting.")
+// 				break channelListener
+// 			}
+// 			t.Errorf("Received error: %s", *err)
+// 		}
+// 	}
+// }

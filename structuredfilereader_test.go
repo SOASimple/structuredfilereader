@@ -1,4 +1,4 @@
-package structuredfilereader
+package sfr
 
 import (
 	"encoding/json"
@@ -9,6 +9,10 @@ import (
 	"testing"
 	"time"
 )
+
+var recordPrinter = func(record *Record) error {
+	return json.NewEncoder(os.Stdout).Encode(record)
+}
 
 func TestUnmarshalFixedWidthRecordReader(t *testing.T) {
 	//SetLogOutput(os.Stdout)
@@ -114,6 +118,7 @@ func TestUnmarshalDelimitedFieldDefStringAndNumberAndDate(t *testing.T) {
 
 const JoinCfg = `
 {
+	"SplitOnRecordName": "InvoiceHeader",
 	"RecordDefinitions": [
     {
       "Name": "InvoiceHeader",
@@ -214,31 +219,23 @@ const HierarchyData = `
 
 func TestParseJoins(t *testing.T) {
 	// SetLogOutput(os.Stdout)
-	p, err := NewParser(ioutil.NopCloser(strings.NewReader(JoinCfg)))
+	invoices := make([]*Record, 0)
+	p, err := NewParser(
+		ioutil.NopCloser(strings.NewReader(JoinCfg)),
+		RecordProcessor(func(record *Record) error {
+			invoices = append(invoices, record)
+			return nil
+		}),
+		nil,
+	)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	recChan, errChan := p.Parse(ioutil.NopCloser(strings.NewReader(HierarchyData)))
-
-	invoices := make([]*Record, 0)
-channelListener:
-	for {
-		select {
-		case err := <-errChan:
-			if err == nil {
-				logger.Println("Received nil Record (on error channel)- exiting.")
-				break channelListener
-			}
-			t.Errorf("Received error: %s", *err)
-		case rec := <-recChan:
-			if rec == nil {
-				logger.Println("Received nil Record (on record channel)- exiting.")
-				break channelListener
-			}
-			//json.NewEncoder(os.Stdout).Encode(rec)
-			invoices = append(invoices, rec)
-		}
+	err = p.Parse(ioutil.NopCloser(strings.NewReader(HierarchyData)))
+	if err != nil {
+		t.Error(err)
+		return
 	}
 
 	// V A L I D A T I O N S
@@ -300,38 +297,28 @@ func TestDelimitedPO(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	p, err := NewParser(config)
+	p, err := NewParser(
+		config,
+		recordPrinter,
+		nil,
+	)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 
-	p.ProcessFile(
-		ProcessorFunc(func(record *Record, err error) {
-			if err != nil {
-				t.Errorf("Callback received error: %s", err)
-				return
-			}
-			jsonBytes, _ := json.MarshalIndent(record, "", "  ")
-			logger.Println(string(jsonBytes))
-		},
-		),
-		"testfiles", "DelimitedPurchaseOrder", "po.dat",
-	)
+	p.ParseFile("testfiles", "DelimitedPurchaseOrder", "po.dat")
 }
 
-func TestMissinFile(t *testing.T) {
-	p, err := NewParser(ioutil.NopCloser(strings.NewReader(JoinCfg)))
+func TestMissingFile(t *testing.T) {
+	p, err := NewParser(
+		ioutil.NopCloser(strings.NewReader(JoinCfg)),
+		recordPrinter,
+		nil,
+	)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	p.ProcessFile(
-		ProcessorFunc(func(record *Record, err error) {
-			if err == nil {
-				t.Error(err)
-			}
-		}),
-		"some", "junk", "file.dat",
-	)
+	p.ParseFile("some", "junk", "file.dat")
 }

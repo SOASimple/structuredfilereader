@@ -1,4 +1,4 @@
-package structuredfilereader
+package sfr
 
 import (
 	"bufio"
@@ -39,7 +39,7 @@ var RecordReaderRegistry = make(map[string]RecordReaderUnmarshalFunc)
 func GetRecordReaderUnmarshalFunc(name string) (RecordReaderUnmarshalFunc, error) {
 	readerFunc, ok := RecordReaderRegistry[name]
 	if !ok {
-		return nil, fmt.Errorf("No RecordReader named \"%s\" exists in registry", name)
+		return nil, ConfigurationError(fmt.Errorf("No RecordReader named \"%s\" exists in registry", name))
 	}
 	return readerFunc, nil
 }
@@ -59,58 +59,83 @@ var FieldTypeRegistry = make(map[string]FieldTypeUnmarshalFunc)
 func GetFieldTypeUnmarshalFunc(name string) (FieldTypeUnmarshalFunc, error) {
 	typeFunc, ok := FieldTypeRegistry[name]
 	if !ok {
-		return nil, fmt.Errorf("No FieldType named \"%s\" exists in registry", name)
+		return nil, ConfigurationError(fmt.Errorf("No FieldType named \"%s\" exists in registry", name))
 	}
 	return typeFunc, nil
 }
 
 //Parser reads a file using a RecordReader and FieldDefinitions.
+//SplitOnRecordName must be provided. It tells the Parser when to call the
+//RecordProcessor. Each time a new Record matching that name (or EOF) is found,
+//the Parser will call the RecordProcessor with the previous Record with a
+//matching name (children are appended beneath the previoud record so it is only
+//sent when the next record is found).
+//You provide a RecordProcessor to do somthing with each Record once it is built.
+//You provide an ErrorHandler to analyse each failure to determine if you wish to
+//halt processing or take some other action (on a Record by Record, Field by Field basis).
+//Default behaviour (if you pass nil to these) is:
+//The default RecordProcessor will do nothing.
+//The default ErrorHandler will terminate on all errors.
 type Parser struct {
 	RecordDefinitions []*RecordDefinition
+	SplitOnRecordName string
+	RecordProcessor   RecordProcessor
+	ErrorHandler      ErrorHandler
 }
 
 //NewParser returns a Parser using the JSON configuration read from r.
-func NewParser(config io.ReadCloser) (parser Parser, err error) {
+func NewParser(config io.ReadCloser, processor RecordProcessor, handler ErrorHandler) (parser Parser, err error) {
 	defer config.Close()
-	err = json.NewDecoder(config).Decode(&parser)
+	err = ConfigurationError(json.NewDecoder(config).Decode(&parser))
+	if err != nil {
+		return
+	}
+	if processor == nil {
+		parser.RecordProcessor = func(record *Record) error { return nil }
+	} else {
+		parser.RecordProcessor = processor
+	}
+	if handler == nil {
+		parser.ErrorHandler = DefaultErrorHandler
+	} else {
+		parser.ErrorHandler = handler
+	}
 	return
 }
 
-//ParseFile parses the requested file returning 2 channels which will be written to by Parse.
+//ParseFile opens the provided file & calls Parse to process the file.
 //Elem can be any number of string required to build up the full path to the file
 //(see http://godoc.org/path/filepath#Join).
-func (p *Parser) ParseFile(elem ...string) (recordChan <-chan *Record, errorChan <-chan *error) {
-	recChan := make(chan *Record)
-	errChan := make(chan *error)
+func (p *Parser) ParseFile(elem ...string) error {
 	//Open the file
 	file, err := os.Open(filepath.Join(elem...))
 	if err != nil {
-		errChan <- &err
-		close(recChan)
-		return
+		return err
 	}
 	return p.Parse(file)
 }
 
-//Parse writes to the first channel each time a top Level (with no parent defined) record is completed(along with its child Records).
-//Callers should loop over a select on the records & err channels & exit the loop when Record.IsValid is not true.
-func (p *Parser) Parse(source io.ReadCloser) (recordChan <-chan *Record, errorChan <-chan *error) {
-	recChan := make(chan *Record)
-	errChan := make(chan *error)
-	go p.parse(source, recChan, errChan)
-	return recChan, errChan
-}
-
-func (p *Parser) parse(source io.ReadCloser, recordChan chan<- *Record, errChan chan<- *error) {
+//Parse parses the requested file calling the Parsers RecordProcessor  for each
+//occurence of a record whose name matches SplitOnRecordName. It also calls the
+//Parsers ErrorHandler if an error is encountered.
+//Three types of error may be returned:
+//1. A ConfigurationError is returned if a RecordDefinition's MatchExpression is
+//   invalid.
+//2. A RecordParsError is returned if the record cannot be processed -
+//   ie. The Record data cannot be split into the requisite number of Fields.
+//3. A FieldParseError is returned if a Field cannot be processed such as when
+//   a Field is defined as numeric but does not contain numeric data.
+//The last 2 error types contain struct fields containing the RecordName &
+//FieldName which caused the error. This means that if a custom ErrorHandler is
+//provided to the Parser, it can ignore errors on certain Records / Fields.
+func (p *Parser) Parse(source io.ReadCloser) error {
 	defer source.Close()
-	defer close(recordChan)
-	defer close(errChan)
-
 	scanner := bufio.NewScanner(source)
 	scanner.Split(bufio.ScanLines)
-	//topRec holds the current top level record which children may be attached to
-	//if they join. Once a new topRec is identified, the current one is sent & then replaced.
-	var topRec *Record
+	//splitRec holds the current record with the name SplitOnRecordName.
+	//When this changes (when we are about to write a new Record to this variable)
+	//we need to call the callback with this value first.
+	var splitRec *Record
 	//For each record definition name, we remember the last record we created of that
 	//name and store it here so we can attach child records which join.
 	lastRecords := make(map[string]*Record)
@@ -119,23 +144,19 @@ func (p *Parser) parse(source io.ReadCloser, recordChan chan<- *Record, errChan 
 		lineNum++
 		for _, recDef := range p.RecordDefinitions {
 			match, err := recDef.Match(scanner.Bytes())
-			if err != nil {
-				logger.Printf("Sending error: %s", err.Error())
-				errChan <- &err
-				return
+			if err = p.ErrorHandler(ConfigurationError(err)); err != nil {
+				return err
 			}
 			if !match {
 				//skip this iteration & try the next RecordDefinition
-				//logger.Printf("No match for record definition %s: %s\n", recDef.Name, string(scanner.Bytes()))
 				continue
 			}
-			logger.Printf("Found match on line %d for record definition %s: %s\n", lineNum, recDef.Name, string(scanner.Bytes()))
 			recVals, err := recDef.RecordReader.Read(scanner.Bytes())
 			if err != nil {
-				err = fmt.Errorf("Error reading from RecordReader: %s", err)
-				logger.Printf("Sending error: %s", err)
-				errChan <- &err
-				return
+				err = RecordParseError{Text: fmt.Sprintf("Error reading from RecordReader: %s", err), RecordName: recDef.Name}
+				if err = p.ErrorHandler(err); err != nil {
+					return err
+				}
 			}
 			rec := Record{
 				Name:     recDef.Name,
@@ -144,17 +165,21 @@ func (p *Parser) parse(source io.ReadCloser, recordChan chan<- *Record, errChan 
 			}
 			for i, fldDef := range recDef.FieldDefinitions {
 				if i > len(recVals)-1 {
-					err = fmt.Errorf("Field %s in Record %s is past the end of available data on line %d", fldDef.Name, recDef.Name, lineNum)
-					logger.Printf("Sending error: %s", err.Error())
-					errChan <- &err
-					return
+					err = RecordParseError{Text: fmt.Sprintf("Past the end of available data on line %d", lineNum), RecordName: recDef.Name}
+					if err = p.ErrorHandler(err); err != nil {
+						return err
+					}
 				}
 				fldVal, valerr := fldDef.FieldType.GetValue(recVals[i])
 				if valerr != nil {
-					err = fmt.Errorf("Error on line %d getting field value: %s", lineNum, valerr)
-					logger.Printf("Sending error %s\n", err)
-					errChan <- &err
-					return
+					err = FieldParseError{
+						Text:       fmt.Sprintf("Error on line %d getting field value: %s", lineNum, valerr),
+						RecordName: recDef.Name,
+						FieldName:  fldDef.Name,
+					}
+					if err = p.ErrorHandler(err); err != nil {
+						return err
+					}
 				}
 				fld := Field{
 					Name:     fldDef.Name,
@@ -163,81 +188,50 @@ func (p *Parser) parse(source io.ReadCloser, recordChan chan<- *Record, errChan 
 				}
 				rec.Fields = append(rec.Fields, fld)
 			}
-			logger.Printf("Adding %s to list of last records", rec.Name)
 			lastRecords[rec.Name] = &rec
 
-			if recDef.ParentRecordName == "" {
-				//This is a top level record, if there is already a top level record in
-				//topRec, send it. Then write the current record to topRec.
-				if topRec != nil {
-					logMsg, _ := json.Marshal(topRec)
-					logger.Printf("Sending top level record: %s = %s\n", topRec.Name, string(logMsg))
-					recordChan <- topRec
+			if recDef.Name == p.SplitOnRecordName {
+				//This is a record we want to split on, if there is already a SplitRec
+				//set, we need to call the callback to clear the way for the new Record.
+				if splitRec != nil {
+					if err = p.RecordProcessor(splitRec); err != nil {
+						return err
+					}
 				}
-				logMsg, _ := json.Marshal(rec)
-				logger.Printf("Setting new top level record: %s", logMsg)
-				topRec = &rec
+				splitRec = &rec
 			} else {
 				//This record needs to be attached to a parent
-				logger.Printf("List of Last Records is %s", lastRecords)
 				if parent, ok := lastRecords[recDef.ParentRecordName]; ok {
-					logger.Printf("Adding %s to %s", recDef.Name, parent.Name)
 					parent.Children = append(parent.Children, &rec)
+					rec.Parent = lastRecords[recDef.ParentRecordName]
 				} else {
-					err = fmt.Errorf("No available parent record %s for child record %s on line %d", recDef.ParentRecordName, rec.Name, lineNum)
-					logger.Printf("Sending error %s\n", err)
-					errChan <- &err
-					return
+					err = RecordParseError{Text: fmt.Sprintf("No available parent record \"%s\" on line %d", recDef.ParentRecordName, lineNum), RecordName: recDef.Name}
+					if err = p.ErrorHandler(err); err != nil {
+						return err
+					}
 				}
 			}
 			//break out to scan next line (don't loop over further RecordDefinitions)
 			break
 		}
 	}
-	//Finally, we need to send topRec.
-	logger.Printf("Sending final top level record %s\n", topRec.Name)
-	recordChan <- topRec
+	//Finally, send the last split record we have.
+	return p.ErrorHandler(p.RecordProcessor(splitRec))
 }
 
-//ProcessorFunc defines a callback which can be passed to Process & ProcessFile.
-//The callback will be called once for each top level Record read from the input
-//containing the top leve Record and any of its children.
-type ProcessorFunc func(record *Record, err error)
+//RecordProcessor defines a callback configured in the Parser.
+//This callback will be called once for each top level Record read from the input
+//containing the current Record. Returning an error aborts processing.
+type RecordProcessor func(record *Record) error
 
-//ProcessFile will Parse the file identified  and call the passed processor once for each
-//top level Record found or any error while reading the file.
-//Elem can be any number of strings required to build up the full path to the file
-//(see http://godoc.org/path/filepath#Join).
-func (p *Parser) ProcessFile(processor ProcessorFunc, elem ...string) {
-	file, err := os.Open(filepath.Join(elem...))
-	if err != nil {
-		processor(nil, err)
-		return
-	}
-	p.Process(processor, file)
-}
+//ErrorHandler defines a callback configured in the parser.
+//This callback will be called whenever an error occurs & allows custom error handling.
+//If this function returns an error, the error will not be handled & processing will be aborted.
+type ErrorHandler func(err error) error
 
-//Process will Parse the source and call the passed processor once for each
-//top level Record found or any error while reading the source.
-func (p *Parser) Process(processor ProcessorFunc, source io.ReadCloser) {
-	recChan, errChan := p.Parse(source)
-channelListener:
-	for {
-		select {
-		case err := <-errChan:
-			if err == nil {
-				logger.Println("Received nil Record (on error channel)- exiting.")
-				break channelListener
-			}
-			processor(nil, *err)
-		case rec := <-recChan:
-			if rec == nil {
-				logger.Println("Received nil Record (on record channel)- exiting.")
-				break channelListener
-			}
-			processor(rec, nil)
-		}
-	}
+//DefaultErrorHandler does not hadle the error - it just returns the error passed into it.
+func DefaultErrorHandler(err error) error {
+	return err
 }
 
 //RecordReader implementations read records into slices of strings
@@ -372,6 +366,7 @@ type FieldType interface {
 type Record struct {
 	Name     string
 	Fields   []Field
+	Parent   *Record `json:"-"` //exclude this to avoid circular reference
 	Children []*Record
 }
 

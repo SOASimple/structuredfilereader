@@ -1,4 +1,5 @@
 {
+	"SplitOnRecordName": "POHeader",
 	"RecordDefinitions": [
     {
       "Name": "POHeader",

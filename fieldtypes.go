@@ -1,4 +1,4 @@
-package structuredfilereader
+package sfr
 
 import (
 	"encoding/json"

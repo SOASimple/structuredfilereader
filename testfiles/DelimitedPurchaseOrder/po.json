@@ -1,8 +1,27 @@
 {
 	"SplitOnRecordName": "POHeader",
 	"RecordDefinitions": [
+		{
+      "Name": "POBatch",
+			"MatchExpression": "^B",
+			"ReaderName": "Delimited",
+      "RecordReader": {
+        "Delimiter": ","
+      },
+			"FieldDefinitions": [
+				{
+					"Name": "RecordType",
+					"TypeName": "String"
+				},
+        {
+					"Name": "BatchID",
+					"TypeName": "String"
+				}
+			]
+		},
     {
       "Name": "POHeader",
+			"ParentRecordName": "POBatch",
 			"MatchExpression": "^H",
 			"ReaderName": "Delimited",
       "RecordReader": {
